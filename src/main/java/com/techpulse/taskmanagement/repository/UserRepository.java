@@ -7,11 +7,6 @@ import com.techpulse.taskmanagement.entity.User;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * Deliberately extends the marker {@link Repository} (not JpaRepository) so that
- * findAll()/findById() are NOT exposed: every read is tenant-scoped.
- * The only cross-tenant lookups are by e-mail, needed before a tenant is known (login / uniqueness).
- */
 public interface UserRepository extends Repository<User, Long> {
 
     User save(User user);

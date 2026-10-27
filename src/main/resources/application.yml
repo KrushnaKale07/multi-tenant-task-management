@@ -32,7 +32,7 @@ spring:
 app:
   jwt:
     # Override in real environments: JWT_SECRET (min 32 chars)
-    secret: ${JWT_SECRET:change-me-in-production-this-default-secret-must-be-at-least-32-bytes-long}
+    secret: ${JWT_SECRET:default-secret-must-be-at-least-32-bytes-long}
     expiration-minutes: ${JWT_EXPIRATION_MINUTES:60}
 
 management:

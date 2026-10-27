@@ -26,7 +26,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** End-to-end tests of the whole filter chain, RBAC and (above all) tenant isolation. */
 @SpringBootTest
 @AutoConfigureMockMvc
 class TenantIsolationIntegrationTest {
