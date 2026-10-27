@@ -1,82 +1,230 @@
-# Multi-Tenant Task Management System (Single Database)
+# Multi-Tenant Task Management System
 
-SaaS-style task management backend: many organisations (**tenants**) share one Spring Boot application and
-**one H2 database**, but their data is completely isolated. Built for the TechPulse IT assignment.
+A backend-only, SaaS-style task management API built with Spring Boot. Multiple organisations (tenants) share **one application and one H2 database**, while tenant ownership is enforced through JWT authentication, request filtering, service-layer checks, and tenant-scoped repository methods.
 
-**Stack:** Java 17 · Spring Boot 3.3 · Spring Security 6 · JWT (jjwt 0.12) · Spring Data JPA · H2 · Lombok ·
-Bean Validation · springdoc (Swagger UI) · JUnit 5 / Mockito / MockMvc · JaCoCo · SonarQube
+## Technology stack
 
----
+- Java 17
+- Spring Boot 3.3.5
+- Spring Security 6
+- Spring Data JPA / Hibernate
+- H2 in-memory database
+- JWT using JJWT 0.12.6
+- BCrypt password hashing
+- Jakarta Bean Validation
+- Springdoc OpenAPI / Swagger UI
+- JUnit 5, Mockito, Spring Boot Test and MockMvc
+- JaCoCo coverage verification
+- SonarQube Maven Scanner
+- Docker and Render Blueprint configuration
 
-## 1. Run the application
+## 1. Prerequisites
 
-```bash
-# prerequisites: JDK 17+, Maven 3.9+
-mvn spring-boot:run          # http://localhost:8080
-```
+Install:
 
-| What | URL |
-|------|-----|
-| Swagger UI (use the *Authorize* button with the login token) | http://localhost:8080/swagger-ui.html |
-| Health | http://localhost:8080/actuator/health |
-| H2 console (disabled by default) | `H2_CONSOLE_ENABLED=true` → http://localhost:8080/h2-console, JDBC URL `jdbc:h2:mem:taskdb`, user `sa`, empty password |
+- JDK 17
+- Maven 3.9+
+- Git
+- Optional: Docker Desktop (for SonarQube or container execution)
+- Optional: `jq` for the shell demo commands below
 
-Configuration lives in `src/main/resources/application.yml` (no `application.properties`).
-
-| Env variable | Default | Meaning |
-|--------------|---------|---------|
-| `PORT` | `8080` | HTTP port |
-| `JWT_SECRET` | dev default | HMAC secret, **min 32 characters** – set it in any shared environment |
-| `JWT_EXPIRATION_MINUTES` | `60` | Token lifetime |
-| `H2_CONSOLE_ENABLED` | `false` | Enable H2 web console |
-
-### Tests, coverage, Sonar
+Confirm the tools are available:
 
 ```bash
-mvn clean verify                 # runs tests, writes target/site/jacoco/index.html, FAILS if line coverage < 80 %
+java -version
+mvn -version
+git --version
 ```
 
-SonarQube (local):
+## 2. Setup and run
+
+### Clone the repository
 
 ```bash
-docker compose -f docker-compose.sonar.yml up -d       # http://localhost:9000  (admin / admin)
-# create a token in SonarQube: My Account -> Security
-mvn clean verify sonar:sonar -Dsonar.token=<token>
+git clone https://github.com/KrushnaKale07/multi-tenant-task-management
+cd multi-tenant-task-management
 ```
 
-Coverage is imported from JaCoCo (`sonar.coverage.jacoco.xmlReportPaths` in `pom.xml`).
-For SonarCloud add `-Dsonar.host.url=https://sonarcloud.io -Dsonar.organization=<org>`.
+If you have downloaded the project as a ZIP, extract it and open a terminal in the directory containing `pom.xml`.
 
-### Docker / deployment (Render, Railway, ...)
+### Configuration
+
+Application configuration is in `src/main/resources/application.yml`; this project does not use `application.properties`.
+
+| Environment variable | Default | Description |
+|---|---|---|
+| `PORT` | `8081` | HTTP port |
+| `JWT_SECRET` | Development fallback in YAML | HMAC signing secret; provide a secret of at least 32 bytes in shared environments |
+| `JWT_EXPIRATION_MINUTES` | `60` | JWT lifetime in minutes |
+| `H2_CONSOLE_ENABLED` | `true` | Enables the H2 web console; set to `false` outside local development |
+
+The default database URL is `jdbc:h2:mem:taskdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE`, with username `sa` and no password. It is a single in-memory database shared by all tenants. **Data is lost when the application process stops.** This behaviour follows the assignment's H2 requirement.
+
+For local development, the H2 console is available at `http://localhost:8081/h2-console` while enabled. Use JDBC URL `jdbc:h2:mem:taskdb`, username `sa`, and an empty password. Keep the console disabled in shared or production environments.
+
+### Run the application
 
 ```bash
-docker build -t task-mgmt . && docker run -p 8080:8080 -e JWT_SECRET=<32+ chars> task-mgmt
+mvn spring-boot:run
 ```
 
-On **Render**: *New → Web Service → connect the GitHub repo → Runtime: Docker* (or use `render.yaml` as a Blueprint).
-Set `JWT_SECRET`; health check path `/actuator/health`. Note: H2 is in-memory, so data resets on every restart
-(accepted by the assignment: "single H2 database").
+By default, the application listens on `http://localhost:8081`.
 
----
+Useful URLs:
 
-## 2. How tenant isolation is achieved (defence in depth)
+| Purpose | URL |
+|---|---|
+| Swagger UI | http://localhost:8081/swagger-ui.html |
+| OpenAPI JSON | http://localhost:8081/v3/api-docs |
+| Health check | http://localhost:8081/actuator/health |
+| H2 console (local development only) | http://localhost:8081/h2-console |
 
-| Layer | Mechanism |
-|-------|-----------|
-| **Token** | JWT carries `tenant_id` and `role`; it is signed (HMAC) so a client cannot alter them. |
-| **Filter** | `JwtAuthenticationFilter` (`OncePerRequestFilter`) validates the token, then stores the identity in the `SecurityContext` **and** the tenant in a `ThreadLocal` (`TenantContext`). The context is always cleared in a `finally` block. |
-| **Client input** | `tenant_id` is never accepted from the client: `TenantParameterRejectionFilter` rejects `tenant_id`/`tenantId` query params and `X-Tenant-Id` headers (400), and Jackson is configured with `fail-on-unknown-properties: true`, so a `tenant_id` in a JSON body is rejected (400). DTOs have no tenant field at all. |
-| **Service** | Services call `TenantContext.requireTenantId()`; new rows always get the tenant from the JWT. Assigning a task validates that the assignee belongs to the same tenant. |
-| **Repository** | Repositories extend the bare `Repository` marker (not `JpaRepository`), so `findAll()`/`findById()` are **not exposed**. Every method is tenant-scoped (`findByIdAndTenantId`, `findAllByTenantId…`). Ownership is thus verified on every load before any update. The only unscoped lookup is `UserRepository.findByEmail/existsByEmail`, which is needed *before* a tenant is known (login, uniqueness). |
-| **Persistence** | `TenantEntityListener` (`@PrePersist/@PreUpdate`) aborts any write whose `tenant_id` differs from the current request's tenant. |
-| **Database** | One H2 database; `tenant_id` column exists in every table (`tenants.tenant_id` is the PK, `users.tenant_id`, `tasks.tenant_id`, indexed). No extra schemas/databases. |
-| **Responses** | A resource of another tenant is answered with **404**, not 403, so its existence is not leaked. |
+### Build a JAR
 
-## 3. JWT structure and claims
+```bash
+mvn clean package
+java -jar target/multi-tenant-task-management-1.0.0.jar
+```
 
-HS256/HS384/HS512 (chosen by key length) signed token, default lifetime 60 min.
+## 3. API overview
 
-Example payload (decoded):
+All request and response bodies use JSON. Endpoints other than tenant registration, login, Swagger/OpenAPI, the error endpoint, health check, and the configured H2 console require authentication. Send the JWT in this header:
+
+```http
+Authorization: Bearer <accessToken>
+```
+
+| Method | Endpoint | Required role | Purpose |
+|---|---|---|---|
+| `POST` | `/tenant/register` | Public | Create a tenant and its first ADMIN user |
+| `POST` | `/auth/login` | Public | Verify credentials and return a JWT |
+| `POST` | `/users` | ADMIN | Create a user in the current tenant using Tenant's JWT token |
+| `GET` | `/users` | ADMIN | List users in the current tenant |
+| `POST` | `/auth/login` | Public | Verify credentials for MANAGER and return a JWT |
+| `POST` | `/tasks` | MANAGER | Create a task in the current tenant using MANAGER's JWT token |
+| `PUT` | `/tasks/{id}/assign` | MANAGER | Assign a task to a user in the same tenant using MANAGER's JWT token |
+| `PUT` | `/tasks/{id}/status` | USER | Update the status of a task assigned to the current user |
+| `GET` | `/tasks` | USER, MANAGER, ADMIN | List tasks visible to the current user use respective user's token |
+
+### Request payloads
+
+**Register a tenant and its first admin — `POST /tenant/register`**
+
+```json
+{
+  "tenantName": "Acme",
+  "email": "admin@acme.com",
+  "password": "Passw0rd!123"
+}
+```
+
+**Login — `POST /auth/login`**
+
+```json
+{
+  "email": "admin@acme.com",
+  "password": "Passw0rd!123"
+}
+```
+
+The login response contains an `accessToken` field. Copy its value for subsequent requests.
+
+**Create a user — `POST /users` (ADMIN)**
+
+```json
+{
+  "email": "manager@acme.com",
+  "password": "Passw0rd!123",
+  "role": "MANAGER"
+}
+```
+
+`role` must be `ADMIN`, `MANAGER`, or `USER`.
+
+**Login — `POST /auth/login`**
+
+```json
+{
+  "email": "manager@acme.com",
+  "password": "Passw0rd!123"
+}
+```
+
+**Create a task — `POST /tasks` (MANAGER)**
+
+```json
+{
+  "title": "Prepare release",
+  "description": "Prepare the v1.0 release checklist"
+}
+```
+
+The task's tenant is taken from the authenticated JWT, not from the request body. New tasks start with status `TODO`.
+
+**Assign a task — `PUT /tasks/{id}/assign` (MANAGER)**
+
+```json
+{
+  "userId": 3
+}
+```
+
+The assignee must belong to the same tenant as the manager and task.
+
+**Update task status — `PUT /tasks/{id}/status` (USER)**
+
+```json
+{
+  "status": "IN_PROGRESS"
+}
+```
+
+Allowed statuses are `TODO`, `IN_PROGRESS`, and `DONE`. A USER can update only a task assigned to that authenticated user.
+
+## 4. API request flow
+
+Typical successful workflow:
+
+1. **Register tenant:** `POST /tenant/register` creates the tenant and its first ADMIN in one transaction.
+2. **Authenticate admin:** `POST /auth/login` verifies the e-mail and BCrypt password, then issues a signed JWT.
+3. **Create users:** the ADMIN sends `POST /users` to create MANAGER and USER accounts in the same tenant.
+4. **Authenticate manager:** the manager logs in and receives a JWT containing their user ID, tenant ID, and role.
+5. **Create and assign a task:** the MANAGER calls `POST /tasks`, then `PUT /tasks/{id}/assign`.
+6. **Authenticate the assignee:** the USER logs in, then calls `PUT /tasks/{id}/status`.
+7. **List tasks:** `GET /tasks` returns only tasks the caller is allowed to see: assigned tasks for USER, all tenant tasks for MANAGER and ADMIN.
+
+### Security and tenant-resolution flow
+
+```text
+HTTP request with optional Bearer token
+        |
+        v
+TenantParameterRejectionFilter
+  Rejects tenant_id / tenantId query parameters and X-Tenant-Id header
+        |
+        v
+JwtAuthenticationFilter (OncePerRequestFilter)
+  Validates JWT signature and expiry
+  Sets authenticated principal and ROLE_<role> in SecurityContext
+  Sets tenant_id in TenantContext for the request
+        |
+        v
+Spring Security endpoint authentication + method-level role checks
+        |
+        v
+Controller -> Service
+  Validates role, task ownership, tenant ownership and assignment
+        |
+        v
+Tenant-scoped repository query -> shared H2 database
+        |
+        v
+Response; TenantContext is cleared after request processing
+```
+
+### JWT claims
+
+The token is signed with an HMAC algorithm. Its decoded payload has this general shape (timestamps and IDs are illustrative):
 
 ```json
 {
@@ -89,147 +237,157 @@ Example payload (decoded):
 }
 ```
 
-| Claim | Meaning |
-|-------|---------|
-| `sub` | user e-mail |
-| `user_id` | id of the user (used e.g. to check "assigned to me") |
-| `tenant_id` | **the only source of the tenant** for the whole request |
-| `role` | `ADMIN`, `MANAGER` or `USER` → mapped to authority `ROLE_<role>` |
-| `iat` / `exp` | issued-at / expiry |
+- `sub`: user e-mail
+- `user_id`: authenticated user's database ID
+- `tenant_id`: tenant identity used for scoped operations
+- `role`: `ADMIN`, `MANAGER`, or `USER`
+- `iat` / `exp`: issued-at and expiration timestamps
 
-## 4. Security filter flow
+JWT payloads are encoded, not encrypted. Do not put secrets or passwords in claims. The signature prevents clients from modifying claims without invalidating the token.
 
-```
-HTTP request
-  │
-  ▼
-TenantParameterRejectionFilter ── tenant_id in query/header? ──► 400 JSON error
-  │
-  ▼
-JwtAuthenticationFilter (OncePerRequestFilter)
-  ├─ no / invalid / expired / forged token → nothing is set (anonymous)
-  └─ valid token → SecurityContext(AuthenticatedUser, ROLE_x)  +  TenantContext.set(tenant_id)
-  │
-  ▼
-AuthorizationFilter ── permitAll: /tenant/register, /auth/login, swagger, health
-  │                     everything else must be authenticated ──► 401 JSON (RestSecurityErrorHandler)
-  ▼
-Controller ── @PreAuthorize role checks ──► 403 via GlobalExceptionHandler
-  ▼
-Service (tenant from TenantContext) ──► tenant-scoped Repository ──► H2
-  ▼
-finally { TenantContext.clear() }
-```
+## 5. Tenant isolation design and assumptions
 
-## 5. API request flow
+Tenant isolation is enforced in multiple layers rather than relying only on controller checks:
 
-| Endpoint | Role | Behaviour |
-|----------|------|-----------|
-| `POST /tenant/register` | public | Creates tenant **and** its first ADMIN user (one transaction). |
-| `POST /auth/login` | public | Verifies BCrypt password, returns JWT with `tenant_id` + `role`. |
-| `POST /users` | ADMIN | Creates a user in the caller's tenant (role in body). |
-| `GET /users` | ADMIN | Lists users of the caller's tenant *(extra, for user management)*. |
-| `POST /tasks` | MANAGER | Creates a task (`TODO`), tenant from JWT. |
-| `PUT /tasks/{id}/assign` | MANAGER | Assigns the task to a user of the same tenant (`{"userId": n}`). |
-| `PUT /tasks/{id}/status` | USER | Updates status (`TODO`/`IN_PROGRESS`/`DONE`) of a task **assigned to the caller** only. |
-| `GET /tasks` | USER, MANAGER, ADMIN | USER → only assigned tasks; MANAGER/ADMIN → all tasks of the tenant. |
+- **JWT is the source of tenant identity.** Secured request payloads and query parameters cannot choose a tenant. DTOs do not expose a tenant ID.
+- **Request filters:** `JwtAuthenticationFilter` validates the token and populates the Spring `SecurityContext` and `TenantContext`. `TenantParameterRejectionFilter` rejects explicit tenant-selection attempts via query parameters or `X-Tenant-Id`.
+- **Context lifecycle:** tenant context is cleared in a `finally` block so servlet-thread reuse cannot leak one request's tenant into another.
+- **Role checks:** Spring Security method annotations enforce the required roles.
+- **Service-layer checks:** task ownership and assignee tenant membership are validated before updates.
+- **Tenant-scoped repositories:** repository APIs expose scoped methods such as `findByIdAndTenantId` and `findAllByTenantId`, rather than unrestricted `JpaRepository.findAll()` / `findById()` methods. E-mail lookups are unscoped where needed for login and global uniqueness.
+- **Persistence guard:** `TenantEntityListener` checks tenant ownership before persistence updates.
+- **Not-found behaviour:** a task or user belonging to a different tenant is treated as not found, avoiding disclosure of another tenant's resource IDs.
 
-Typical flow: **register tenant → login as admin → create manager & user → login as manager → create task →
-assign to user → login as user → update status**.
+### Explicit design decisions
 
-### Demo with curl
+1. **Single database:** all tenants share one in-memory H2 database; no tenant-specific database or schema is created.
+2. **Global e-mail uniqueness:** e-mail addresses are normalized and unique across tenants because login accepts only e-mail and password and has no tenant selector.
+3. **Initial administrator:** tenant registration creates the tenant and its first ADMIN atomically.
+4. **Role capabilities:** ADMIN manages users and can view all tenant tasks; MANAGER creates and assigns tasks; USER views assigned tasks and updates their own assigned task status.
+5. **Assignment policy:** a manager may assign a task to a user in the same tenant; reassignment is permitted.
+6. **Task lifecycle:** tasks start as `TODO`; status values are `TODO`, `IN_PROGRESS`, and `DONE`.
+7. **Stateless authentication:** no server-side session, refresh token, or token revocation/logout mechanism is implemented; the access token expires according to `JWT_EXPIRATION_MINUTES`.
+8. **Schema management:** Hibernate uses `ddl-auto: update` in the provided YAML. This is convenient for the assignment, but a migration tool such as Flyway would be preferable for a production system.
+9. **Error handling:** API errors use a consistent JSON structure. Validation and malformed input typically return `400`, unauthenticated requests `401`, role/operation denials `403`, missing or cross-tenant resources `404`, and duplicate resources `409`.
 
-```bash
-BASE=http://localhost:8080
-J='Content-Type: application/json'
+## 6. Validation and error responses
 
-# 1. register tenant + first admin
-curl -s -X POST $BASE/tenant/register -H "$J" \
-  -d '{"tenantName":"Acme","email":"admin@acme.com","password":"Passw0rd!123"}'
+Request DTOs use Jakarta Bean Validation. Examples include required fields, valid e-mail addresses, password length of 8–72 characters, bounded task title/description lengths, positive user IDs, and valid enum values.
 
-# 2. login as admin
-ADMIN=$(curl -s -X POST $BASE/auth/login -H "$J" -d '{"email":"admin@acme.com","password":"Passw0rd!123"}' | jq -r .accessToken)
-
-# 3. admin creates a manager and a user
-curl -s -X POST $BASE/users -H "$J" -H "Authorization: Bearer $ADMIN" \
-  -d '{"email":"manager@acme.com","password":"Passw0rd!123","role":"MANAGER"}'
-curl -s -X POST $BASE/users -H "$J" -H "Authorization: Bearer $ADMIN" \
-  -d '{"email":"user@acme.com","password":"Passw0rd!123","role":"USER"}'
-
-# 4. manager creates + assigns a task (user id from step 3)
-MGR=$(curl -s -X POST $BASE/auth/login -H "$J" -d '{"email":"manager@acme.com","password":"Passw0rd!123"}' | jq -r .accessToken)
-curl -s -X POST $BASE/tasks -H "$J" -H "Authorization: Bearer $MGR" -d '{"title":"Prepare release","description":"v1.0"}'
-curl -s -X PUT  $BASE/tasks/1/assign -H "$J" -H "Authorization: Bearer $MGR" -d '{"userId":3}'
-
-# 5. user updates status and lists own tasks
-USR=$(curl -s -X POST $BASE/auth/login -H "$J" -d '{"email":"user@acme.com","password":"Passw0rd!123"}' | jq -r .accessToken)
-curl -s -X PUT $BASE/tasks/1/status -H "$J" -H "Authorization: Bearer $USR" -d '{"status":"IN_PROGRESS"}'
-curl -s $BASE/tasks -H "Authorization: Bearer $USR"
-
-# 6. isolation checks (all rejected)
-curl -s "$BASE/tasks?tenant_id=2" -H "Authorization: Bearer $ADMIN"                       # 400
-curl -s -X POST $BASE/tasks -H "$J" -H "Authorization: Bearer $MGR" -d '{"title":"x","tenant_id":2}'   # 400
-```
-
-### Error format
-
-Every error (validation, security, business, unexpected) has the same JSON shape, produced by
-`GlobalExceptionHandler` (controller layer) and `RestSecurityErrorHandler` (filter layer):
+Example error shape:
 
 ```json
-{ "timestamp": "2026-10-26T10:15:30Z", "status": 400, "error": "Bad Request",
-  "message": "Validation failed", "path": "/tenant/register",
-  "fieldErrors": { "password": "password must be 8-72 characters" } }
+{
+  "timestamp": "2026-10-26T10:15:30Z",
+  "status": 400,
+  "error": "Bad Request",
+  "message": "Validation failed",
+  "path": "/tenant/register",
+  "fieldErrors": {
+    "password": "password must be 8-72 characters"
+  }
+}
 ```
 
-| Status | When |
-|--------|------|
-| 400 | validation errors, malformed JSON, unknown field (e.g. `tenant_id`), tenant param/header, bad path variable |
-| 401 | missing/invalid/expired token, wrong credentials |
-| 403 | role not allowed, or USER updating a task not assigned to them |
-| 404 | resource missing **or belonging to another tenant** |
-| 409 | duplicate tenant name or e-mail |
-| 405 / 415 / 500 | wrong method / media type / unexpected error (details hidden, logged server-side) |
+`GlobalExceptionHandler` handles controller/service exceptions, while `RestSecurityErrorHandler` formats security-filter errors. Unexpected server errors should not expose internal stack traces to clients.
 
-## 6. Project structure
+## 7. Run tests and check coverage
 
-```
-src/main/java/com/techpulse/taskmanagement
-├── config/        SecurityConfig, JwtProperties, OpenApiConfig
-├── security/      JwtService, JwtAuthenticationFilter, TenantParameterRejectionFilter,
-│                  RestSecurityErrorHandler, AuthenticatedUser, SecurityUtils
-├── tenant/        TenantContext (ThreadLocal), TenantOwned, TenantEntityListener
-├── domain/        Tenant, User, Task, Role, TaskStatus  (JPA entities / enums)
-├── repository/    tenant-scoped Spring Data repositories
-├── service/       TenantService, AuthService, UserService, TaskService
-├── controller/    TenantController, AuthController, UserController, TaskController
-├── dto/           request/response records with Bean Validation
-├── exception/     GlobalExceptionHandler, ApiError, custom exceptions
-└── util/          EmailNormalizer
-src/test/java/...  unit tests (JWT, tenant context/listener, TaskService, SecurityUtils)
-                   + MockMvc integration tests (full filter chain, RBAC, cross-tenant attacks)
+Run the complete test suite and JaCoCo verification:
+
+```bash
+mvn clean verify
 ```
 
-## 7. Assumptions and design decisions
+The Maven build is configured to fail when **line coverage is below 80%**. The HTML coverage report is generated at:
 
-* **E-mail is globally unique** and stored lower-case, because `POST /auth/login` receives only e-mail + password
-  (no tenant selector), so the e-mail must identify the tenant.
-* `POST /tenant/register` takes `tenantName`, `email`, `password`; the created admin is the first `ADMIN`.
-* Roles follow the assignment literally: only **MANAGER** creates/assigns tasks, only **USER** updates task status,
-  only **ADMIN** manages users. `GET /tasks`: USER sees assigned tasks, MANAGER and ADMIN see all tasks of the tenant.
-* A manager may assign a task to **any user of the same tenant** (any role); re-assignment is allowed.
-* Cross-tenant references answer **404** (no existence leak); a same-tenant but unauthorised action answers **403**.
-* The `tenants` table's primary key column is named `tenant_id`, so that *every* table has a `tenant_id` column.
-* Repositories intentionally do not extend `JpaRepository`, making it impossible to call an unscoped `findAll()`.
-* Stateless API (no sessions, CSRF disabled), BCrypt password hashing, no refresh tokens / logout (token expires).
-* Hibernate `ddl-auto: update` on an in-memory H2 – data is lost on restart by design.
+```text
+target/site/jacoco/index.html
+```
 
-## 8. Demo-video checklist (≥ 5 min)
+The project contains unit tests for configuration, JWT handling, security utilities, tenant context/entity listener and task service, plus MockMvc integration tests for tenant isolation and security. Run the command above to verify the current test result and actual coverage; do not report a coverage percentage until the build completes successfully.
 
-1. Requirements recap & architecture (layers, package structure).
-2. Walk through JWT claims → `JwtAuthenticationFilter` → `TenantContext` → service → repository.
-3. Live demo (Swagger UI or curl): register two tenants, roles, task flow.
-4. Attack demo: `tenant_id` in body/query, other tenant's task id, token of tenant A on tenant B data.
-5. Global exception handling & validation responses.
-6. Tests + JaCoCo report + SonarQube dashboard.
-7. Deployment (Render) and README.
+## 8. SonarQube code quality analysis
+
+### Start local SonarQube
+
+Docker Desktop must be running:
+
+```bash
+docker compose -f docker-compose.sonar.yml up -d
+```
+
+Open `http://localhost:9000`. On first login, follow the SonarQube setup flow, change the default credentials if prompted, and create a user token under **My Account → Security**.
+
+Run tests, generate the JaCoCo report, and analyse the project:
+
+```bash
+mvn clean verify sonar:sonar -Dsonar.token=YOUR_SONAR_TOKEN
+```
+
+The scanner configuration and JaCoCo XML report path are declared in `pom.xml`. Do not commit the SonarQube token to Git. For SonarCloud, supply the appropriate host URL and organization/project settings as command-line properties or environment-based CI secrets.
+
+## 9. Docker and optional Render deployment
+
+### Run with Docker
+
+Build the image:
+
+```bash
+docker build -t multi-tenant-task-management .
+```
+
+Run it with a strong JWT secret:
+
+```bash
+docker run --rm -p 8081:8081 `
+  -e PORT=8081 `
+  -e JWT_SECRET="replace-with-a-random-secret-at-least-32-characters" `
+  -e H2_CONSOLE_ENABLED=false `
+  multi-tenant-task-management
+```
+
+The supplied Dockerfile builds and runs the application on Java 17. The application's default local port is `8081`; the `PORT` environment variable can override it.
+
+### Render
+
+The repository includes `render.yaml` and a Dockerfile. To deploy:
+
+1. Push the complete project to GitHub.
+2. In Render, create a new Blueprint or Docker Web Service and select the repository.
+3. Confirm the health check path is `/actuator/health`.
+4. Configure a strong `JWT_SECRET` in the service environment and set `H2_CONSOLE_ENABLED=false`.
+5. Deploy and verify the health endpoint and main API flow.
+
+**Deployment limitation:** H2 is in-memory. Data is not durable and will be lost when the process restarts or the service is redeployed. This matches the assignment's single-H2 requirement but is not suitable for a production multi-tenant SaaS without a persistent database.
+
+## 10. Repository structure
+
+```text
+src/main/java/com/techpulse/taskmanagement/
+├── config/       Security, JWT properties and OpenAPI configuration
+├── controller/   REST controllers
+├── dto/          Validated request and response DTOs
+├── entity/       Tenant, User, Task and enums
+├── exception/    API error model, global handler and custom exceptions
+├── repository/   Tenant-scoped repository interfaces
+├── security/     JWT service/filter, authentication principal and error handling
+├── service/      Authentication, tenant, user and task business logic
+├── tenant/       Tenant context, ownership contract and entity listener
+└── util/         E-mail normalization
+
+src/test/java/com/techpulse/taskmanagement/
+├── config/
+├── integration/
+├── security/
+├── service/
+└── tenant/
+```
+
+## 11. Before submission
+
+- [ ] `mvn clean verify` succeeds and coverage is at least 80%.
+- [ ] SonarQube analysis has been run and findings reviewed.
+- [ ] README instructions have been followed from a clean checkout.
+- [ ] No real secrets, access tokens, or passwords are committed.
+- [ ] GitHub repository contains the complete source.
