@@ -21,6 +21,9 @@ spring:
   h2:
     console:
       enabled: ${H2_CONSOLE_ENABLED:true}
+      path: /h2-console
+      settings:
+        web-allow-others: false
   jackson:
     deserialization:
       # Unknown JSON fields (e.g. "tenant_id") are rejected with HTTP 400.
