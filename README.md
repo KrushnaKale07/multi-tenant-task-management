@@ -16,7 +16,7 @@ A backend-only, SaaS-style task management API built with Spring Boot. Multiple 
 - JUnit 5, Mockito, Spring Boot Test and MockMvc
 - JaCoCo coverage verification
 - SonarQube Maven Scanner
-- Docker and Render Blueprint configuration
+- Docker, Render Blueprint configuration, and the current Heroku deployment
 
 ## 1. Prerequisites
 
@@ -56,11 +56,29 @@ Application configuration is in `src/main/resources/application.yml`; this proje
 | `PORT` | `8081` | HTTP port |
 | `JWT_SECRET` | Development fallback in YAML | HMAC signing secret; provide a secret of at least 32 bytes in shared environments |
 | `JWT_EXPIRATION_MINUTES` | `60` | JWT lifetime in minutes |
-| `H2_CONSOLE_ENABLED` | `true` | Enables the H2 web console; set to `false` outside local development |
+|`H2_CONSOLE_ENABLED` | `true` in the current YAML | Enables the H2 web console; set to `false` when console access is not needed |
+| `H2_CONSOLE_WEB_ALLOW_OTHERS` | `false` unless configured | Allows remote H2 Console connections; the current Heroku deployment requires `true` for remote browser access. Disable after debugging/demo. |
 
 The default database URL is `jdbc:h2:mem:taskdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE`, with username `sa` and no password. It is a single in-memory database shared by all tenants. **Data is lost when the application process stops.** This behaviour follows the assignment's H2 requirement.
 
-For local development, the H2 console is available at `http://localhost:8081/h2-console` while enabled. Use JDBC URL `jdbc:h2:mem:taskdb`, username `sa`, and an empty password. Keep the console disabled in shared or production environments.
+For local development, the H2 console is available at `http://localhost:8081/h2-console` while enabled. Use the exact JDBC URL configured in `spring.datasource.url`; the documented default is `jdbc:h2:mem:taskdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE`, username `sa`, and an empty password unless you have configured a different credential.
+
+### Live deployment (Heroku)
+
+The currently shared deployment base URL is:
+
+- **Application/API base URL:** https://enigmatic-lake-24845-1825eb87b9ea.herokuapp.com
+- **H2 Console:** https://enigmatic-lake-24845-1825eb87b9ea.herokuapp.com/h2-console/
+- **Swagger UI:** https://enigmatic-lake-24845-1825eb87b9ea.herokuapp.com/swagger-ui.html
+- **OpenAPI JSON:** https://enigmatic-lake-24845-1825eb87b9ea.herokuapp.com/v3/api-docs
+- **Health check:** https://enigmatic-lake-24845-1825eb87b9ea.herokuapp.com/actuator/health
+
+Use the API base URL plus the endpoint path in the API tables below. For example, tenant registration is `POST https://enigmatic-lake-24845-1825eb87b9ea.herokuapp.com/tenant/register`, and login is `POST https://enigmatic-lake-24845-1825eb87b9ea.herokuapp.com/auth/login`.
+
+For the deployed H2 Console, select the same JDBC URL used by the running application—not the H2 Console's default `jdbc:h2:~/test`. For this project's documented configuration, that URL is `jdbc:h2:mem:taskdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE`; use the deployed app's actual datasource username and password. A console connection must target the application's actual database, not a separate database named `test`.
+
+**Security warning:** Remote H2 Console access is currently enabled to support debugging/demo access. This is an administrative database interface and should not remain publicly exposed for normal operation. Disable remote access and/or the console after the demo. Never store real customer data or production secrets in this demo database.
+
 
 ### Run the application
 
@@ -327,7 +345,7 @@ mvn clean verify sonar:sonar -Dsonar.token=YOUR_SONAR_TOKEN
 
 The scanner configuration and JaCoCo XML report path are declared in `pom.xml`. Do not commit the SonarQube token to Git. For SonarCloud, supply the appropriate host URL and organization/project settings as command-line properties or environment-based CI secrets.
 
-## 9. Docker and optional Render deployment
+## 9. Docker and deployment
 
 ### Run with Docker
 
@@ -348,6 +366,38 @@ docker run --rm -p 8081:8081 `
 ```
 
 The supplied Dockerfile builds and runs the application on Java 17. The application's default local port is `8081`; the `PORT` environment variable can override it.
+### Current Heroku deployment
+
+The live deployment currently used for API and H2 Console demonstrations is:
+
+`https://enigmatic-lake-24845-1825eb87b9ea.herokuapp.com`
+
+Configure the following Heroku Config Vars only if the console is intentionally required for a temporary demo:
+
+| Config Var | Value | Purpose |
+|---|---|---|
+| `H2_CONSOLE_ENABLED` | `true` | Enables the console endpoint |
+| `H2_CONSOLE_WEB_ALLOW_OTHERS` | `true` | Allows remote console connections |
+| `JWT_SECRET` | A strong random secret of at least 32 bytes | Signs JWTs; never commit this value |
+
+The YAML should reference these variables, for example:
+
+```yaml
+spring:
+  h2:
+    console:
+      enabled: ${H2_CONSOLE_ENABLED:false}
+      path: /h2-console
+      settings:
+        web-allow-others: ${H2_CONSOLE_WEB_ALLOW_OTHERS:false}
+```
+
+After changing local files, commit and deploy them to Heroku; changing a local YAML file alone does not update the deployed service. Set Config Vars in the Heroku dashboard under **Settings → Config Vars**. If the console shows `Database "/app/test" not found`, replace the default console JDBC URL with the exact datasource URL configured by the application. Do not create a separate `test` database to work around the mismatch.
+
+**Important:** H2's `mem:` database is in-memory. It is shared within the relevant running application process, but it is not durable and may be empty after a process restart/redeploy. Do not assume the console's connection is inspecting the application's database unless its JDBC URL and runtime configuration match.
+
+### Render (optional alternative)
+
 
 ### Render
 
@@ -356,7 +406,7 @@ The repository includes `render.yaml` and a Dockerfile. To deploy:
 1. Push the complete project to GitHub.
 2. In Render, create a new Blueprint or Docker Web Service and select the repository.
 3. Confirm the health check path is `/actuator/health`.
-4. Configure a strong `JWT_SECRET` in the service environment and set `H2_CONSOLE_ENABLED=false`.
+4. Configure a strong `JWT_SECRET` in the service environment and set `H2_CONSOLE_ENABLED=false` unless remote console access is explicitly needed for a short demo.
 5. Deploy and verify the health endpoint and main API flow.
 
 **Deployment limitation:** H2 is in-memory. Data is not durable and will be lost when the process restarts or the service is redeployed. This matches the assignment's single-H2 requirement but is not suitable for a production multi-tenant SaaS without a persistent database.
