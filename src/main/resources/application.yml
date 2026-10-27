@@ -1,0 +1,43 @@
+server:
+  port: ${PORT:8081}
+
+spring: 
+  application:
+    name: multi-tenant-task-management
+  autoconfigure:
+    # Authentication is done by our JWT flow, so no default in-memory user is wanted.
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  datasource:
+    # Single shared H2 database for ALL tenants (no extra schemas / databases).
+    url: jdbc:h2:mem:taskdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    open-in-view: false
+    show-sql: false
+    hibernate:
+      ddl-auto: update
+  h2:
+    console:
+      enabled: ${H2_CONSOLE_ENABLED:true}
+  jackson:
+    deserialization:
+      # Unknown JSON fields (e.g. "tenant_id") are rejected with HTTP 400.
+      fail-on-unknown-properties: true
+
+app:
+  jwt:
+    # Override in real environments: JWT_SECRET (min 32 chars)
+    secret: ${JWT_SECRET:change-me-in-production-this-default-secret-must-be-at-least-32-bytes-long}
+    expiration-minutes: ${JWT_EXPIRATION_MINUTES:60}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html

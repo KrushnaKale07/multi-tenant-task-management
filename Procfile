@@ -1,0 +1,1 @@
+web: java -jar target/multi-tenant-task-management-1.0.0.jar
